@@ -1057,22 +1057,16 @@ double simple_projection_relax(const std::vector<Edge>& edges, const std::vector
     std::vector<Line> lines = getLines();
 
     std::cerr << "Computing the relaxation on " << lines.size() << " lines \n";
-    for( auto& line: lines){
-        std::cerr << line.display() <<  "\n ";
-    }
+
 
     double tot_err = 0.0;
     for(auto& [i1, i2, d, i]: edges){
         double min_err = std::numeric_limits<double>::max();
         for(Line& line: lines){
             
-            std::cerr << "Edge " << points[i1-1].display() << " -> " << points[i2-1].display();
             //have to decrement the vertex ids by one to map them correctly back to their indices in the point vector
             double proj_err = line.projection_error(points[i1-1], points[i2-1]);
             if(proj_err < min_err){
-                std::cerr << "Edge " << points[i1-1].display() << " -> " << points[i2-1].display() << "\n";
-                std::cerr << "Finds new minimum on line " << line.display() << "\n";
-                std::cerr << "Minimum: " << proj_err << "\n";
                 min_err = proj_err; 
             }
 
@@ -1118,9 +1112,6 @@ double rotation_projection_relax(const std::vector<Edge>& edges, std::vector<Poi
     new_lines.push_back(Line(Point(0,0), 1, 0));
 
     std::cerr << "Computing the relaxation on " << lines.size() << " lines \n";
-    for( auto& line: new_lines){
-        std::cerr << line.display() <<  "\n ";
-    }
 
     double tot_err = 0.0;
     for(auto& [i1, i2, d, i]: edges){
@@ -1130,9 +1121,6 @@ double rotation_projection_relax(const std::vector<Edge>& edges, std::vector<Poi
             //have to decrement the vertex ids by one to map them correctly back to their indices in the point vector
             double proj_err = line.projection_error(points[i1-1], points[i2-1]);
             if(proj_err < min_err){
-                std::cerr << "Edge " << points[i1-1].display() << " -> " << points[i2-1].display() << "\n";
-                std::cerr << "Finds minimum on line " << line.display();
-                std::cerr << "Minimum: " << proj_err << "\n";
                 min_err = proj_err; 
             }
 

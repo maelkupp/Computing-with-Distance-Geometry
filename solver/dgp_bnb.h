@@ -1,4 +1,5 @@
 //The header file for all the functions used in my MinErr BnB solver
+#include "gurobi_c++.h"
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -6,6 +7,7 @@
 #include <string>
 #include <iostream>
 #include <set>
+#include <memory>
 
 // 0 ---------------------- Structs used ------------------------------------------------------
 constexpr double PI = 3.14159265358979323846;
@@ -44,15 +46,29 @@ struct Edge{
 
 };
 
+
+enum class WeightMode {
+    INTEGER,
+    REAL_SCALED
+};
+
+struct SolverConfig {
+    WeightMode mode;
+    int scaling_power;   // used only if REAL_SCALED
+};
+
 struct IndexedEdge{
     int id;
     int u;
     int v;
-    double weight;
+    double weight;      // original
+    int weight_int;     // scaled version
+    int directed;
 };
 
 struct CycleID{
     std::vector<int> edge_ids;
+    std::vector<int> coeff;   // +1 or -1
 };
 
 
@@ -100,27 +116,29 @@ struct WeightedCycleID{
 // 1 --------------- Graph + Preprocessing -----------------
 
 //reads a dat file and return a tuple  (vector of edges, set of vertex ids, map from vertex ids -> vertex names)
-std::tuple<std::vector<Edge>, std::set<int>, std::unordered_map<int, std::string>> parse_dgp_instance_dat_file(std::string file_path);
+std::tuple<std::vector<Edge>, std::set<int>, std::unordered_map<int, std::string>> parse_dgp_instance_dat_file(const std::string& file_path);
 
 //creates an adjacency list from a vector of edges of a graph
-std::unordered_map<int, std::vector<Adjacency>> create_adjacency_list_from_edges(
+std::vector<std::vector<Adjacency>> create_adjacency_list_from_edges(
     const std::vector<Edge>& edges,
     const int num_vertices
 );
 
 std::vector<IndexedEdge> build_indexed_edges(
-    const std::vector<Edge>& edges
+    const std::vector<Edge>& edges,
+    int scale
+
 );
 
 //creates a spanning forest of a graph from its adjacency list
 std::vector<std::vector<Edge>> get_spanning_forest(
-    std::unordered_map<int, std::vector<Adjacency>>& adj_list
+    std::vector<std::vector<Adjacency>>& adj_list
 );
 
 //creates a cycle basis for each connected component of the graph from a vector of spanning forests (each spanning forest is a spanning forest of a C.C) and adjacency list
 std::vector<std::vector<std::vector<Edge>>> get_cycle_basis(
     std::vector<std::vector<Edge>>& spanning_forest_edges,
-    std::unordered_map<int, std::vector<Adjacency>>& adj_list
+    std::vector<std::vector<Adjacency>>& adj_list
 );
 
 //converts and flattens a cycle basis of Edges into a vector of CycleIDs,
@@ -153,7 +171,12 @@ double greedy_packing_cycle_err(
     const std::vector<std::vector<double>>& cycle_errors);
 
 //function to compute the LB at each node of the BnB
-double compute_cycle_packing_LB(const std::vector<CycleID>& cycles, const std::vector<int>& fixed_signs, const std::vector<IndexedEdge>& edges);
+double compute_cycle_packing_LB(
+    const std::vector<CycleID>& cycles,
+    const std::vector<double>& cycle_errors,
+    const std::vector<IndexedEdge>& edges,
+    int scale
+);
 
 
 
@@ -163,14 +186,14 @@ double compute_cycle_packing_LB(const std::vector<CycleID>& cycles, const std::v
 //performs coefficient descent on the R line (need an exact explanation of what this function does, leo told me there was an actual name for it)
 double coefficient_descent_on_line(
     const std::vector<Edge>& edges,
-    const std::unordered_map<int, std::vector<Adjacency>>& adj_list,
+    const std::vector<std::vector<Adjacency>>& adj_list,
     std::vector<double>& t);
 
 //heuristic MinErrDGP solver, provides a tight upper bound to the error quickly, call the coefficient gradient descent function
-double optimized_projection_minErrDGP1_UB(
+std::pair<double, std::vector<double>> optimized_projection_minErrDGP1_UB(
     const std::vector<Edge>& edges,
     const std::set<int>& vertex_ids,
-    std::unordered_map<int, std::vector<Adjacency>>& adj_list
+    std::vector<std::vector<Adjacency>>& adj_list
 
 );
 
@@ -186,11 +209,24 @@ double compute_initial_UB(
 // 4 ------------------ Exact embedding solver -------------
 //this is the part at the leaves of the tree, where we compute min || Bx - d \odot s ||
 
-//build incidence matrix B of our graph
-std::vector<std::vector<double>> build_incidence_matrix(
-    const std::vector<IndexedEdge>& edges,
-    int n);
+// ExactEmbeddingSolver.h
 
+class ExactEmbeddingSolver {
+private:
+    GRBEnv env;
+    std::unique_ptr<GRBModel> model;   // Must be a pointer!
+
+    std::vector<GRBVar> x;
+    std::vector<GRBVar> t;
+    std::vector<GRBConstr> c1;
+    std::vector<GRBConstr> c2;
+
+    const std::vector<IndexedEdge>& edges;
+
+public:
+    ExactEmbeddingSolver(const std::vector<IndexedEdge>& edges_, int n_vertices);
+    std::pair<double, std::vector<double>> solve(const std::vector<int>& fixed_signs);
+};
 
 //wrapper that does all the steps in computing the exact embedding that minimizes the error for a fixed sign, is what guarantees the correctness of the BnB
 double solve_exact_embedding(
@@ -200,18 +236,22 @@ double solve_exact_embedding(
 // 5 ----------------------- Branch and Bound Engine -----------------------
 
 //selects the edge we will branch on, for now keep it simple, will improve it later on (edges in most cycles, edge in largest error cycle)
+
 int select_branching_edge(
     const std::vector<int>& fixed_signs
 );
 
 //the recursive function for our branch and bound
 void branch_and_bound(
+    ExactEmbeddingSolver& exact_solver,
     const std::vector<CycleID>& i_cycles,
     const std::vector<IndexedEdge>& i_edges,
-     std::vector<int>& fixed_signs,
+    const std::vector<std::vector<int>>& edge_to_cycles,
+    std::vector<int>& fixed_signs,
     double& bestUB,
-    int depth
+    std::vector<double>& bestEmbedding,
+    int scale
 );
 
 //solver wrapper, will see what the exact signature for this function is in bit
-double solve_minerr_dgp1(const std::string& filename);
+std::pair<double, std::vector<double>> solve_minerr_dgp1(const std::string& filename, int weight_flag);

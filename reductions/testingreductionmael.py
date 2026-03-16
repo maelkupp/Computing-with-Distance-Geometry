@@ -67,7 +67,8 @@ def generate_instance(n, m, s, feasType):
             elif A[i, j] < -myEps:
                 terms.append("{}*x{}".format(int(A[i,j]), j+1))
         # We use "<=" for each constraint.
-        opb_lines.append(" ".join(terms) + " <= {};".format(int(b[i])))
+
+        opb_lines.append(" ".join(terms) + " = {};".format(int(b[i])))
     opb_str = "\n".join(opb_lines)
     return opb_str
 

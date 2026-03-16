@@ -72,7 +72,6 @@ def writeDat(G, dgpf, opbf, e=exn, t=timestamp):
         print("param : E : c I :=", file=f)
 
         for el in E:
-            print(el[0], el[1], el[2], el[3], VL[el[0]], VL[el[1]])
             print("  {} {}  {:.3f} {}  # [{},{}]".format(el[0],el[1],el[2],el[3],VL[el[0]],VL[el[1]]), file=f)
         print(";", file=f)
         #print("# vertex map", file=f)
@@ -131,36 +130,11 @@ def normalize_blp(blp_instance):
     for i in Ax:
         norm_Axi, norm_b, norm_rel = normalizing_single_constraint(Ax[i], b[i], relation[i])
 
-        if norm_rel == "=":
-            # 1. ∑ aᵢ·xᵢ ≤ b
-            Ax_norm[new_index] = dict(norm_Axi)
-            rel_norm[new_index] = "<="
-            b_norm[new_index] = norm_b
-            new_index += 1
-
-            # 2. ∑ (-aᵢ)·xᵢ ≤ -b, with proper literal sign flipping
-            flipped_Ax = {}
-            flipped_b = -norm_b
-            for var, coeff in norm_Axi.items():
-                flipped_coeff = -coeff
-                if flipped_coeff < 0:
-                    #print('landed here')
-                    flipped_coeff = abs(flipped_coeff)
-                    var = -var
-                    flipped_b += flipped_coeff
-                flipped_Ax[var] = flipped_coeff
-                #print(f"here, flipped_Ax: {flipped_Ax}")
-            Ax_norm[new_index] = flipped_Ax
-            rel_norm[new_index] = "<="
-            b_norm[new_index] = flipped_b
-            new_index += 1
-
-        else:
-            # Otherwise, just store the constraint as-is
-            Ax_norm[new_index] = norm_Axi
-            rel_norm[new_index] = norm_rel
-            b_norm[new_index] = norm_b
-            new_index += 1
+        # Otherwise, just store the constraint as-is
+        Ax_norm[new_index] = norm_Axi
+        rel_norm[new_index] = norm_rel
+        b_norm[new_index] = norm_b
+        new_index += 1
     
     return (Ax_norm, rel_norm, b_norm, var)
 
@@ -203,8 +177,6 @@ def reduce_blp_2_dgp(blp_instance):
     (Ax, rel, b, var) = normalize_blp(blp_instance)
 
     (Ax, b) = multiply_blp_n(Ax, b, 5)
-    for index in range(len(Ax)):
-        print(f"{Ax[index]} <= {b[index]}")
     max_var = max(var) # here we obtain the number of literals in our BLP instance
     nconstraints = len(Ax) #the number of DGP contraints we have to map to
 
@@ -241,20 +213,20 @@ def reduce_blp_2_dgp(blp_instance):
 
 
     for index in Ax:
-        VL[vertex_id] = "T^{}".format(index) #the target vector T
-        LV[VL[vertex_id]] = vertex_id
-        vertex_id += 1
+        if b[index] != 0 or rel[index] == "=":
+            VL[vertex_id] = "T^{}".format(index) #the target vector T
+            LV[VL[vertex_id]] = vertex_id
+            vertex_id += 1
+
         if b[index] > 0:
             edges_to_add.append((LV["A"], LV["T^{}".format(index)], b[index]+1, 0)) #forces the b vertex to fold in the direction of the sum
             edges_to_add.append((LV["P_0"], LV["T^{}".format(index)], b[index], 0)) 
         elif b[index] < 0:
-            print(f"bound: {b[index]}")
             edges_to_add.append((LV["A"], LV["T^{}".format(index)],  -b[index] - 1, 0)) #forces the T vertex to fold in the opposite direction to the direction of the sum
             edges_to_add.append((LV["P_0"], LV["T^{}".format(index)], -b[index], 0))
 
     for index in Ax:
         #iterating over each constraint in the BLP
-        print(Ax[index])
 
         #################### ENCODING THE PARTIAL SUM and the BOUND #############################
 
@@ -262,15 +234,15 @@ def reduce_blp_2_dgp(blp_instance):
         VL[vertex_id] = "M_1^{}".format(index)
         LV[VL[vertex_id]] = vertex_id
         vertex_id += 1
+
         edges_to_add.append((LV["A"], LV["M_1^{}".format(index)], (get_literal_coeff(Ax, index, 1)/2) +1, 0))
         VL[vertex_id] = "L_1^{}".format(index)
         LV[VL[vertex_id]] = vertex_id
         vertex_id += 1
+
         VL[vertex_id] = "A_2^{}".format(index)
         LV[VL[vertex_id]] = vertex_id
         vertex_id += 1
-
-
 
 
         edges_to_add.append((LV["P_0"], LV["M_1^{}".format(index)], (get_literal_coeff(Ax, index, 1))/2, 0))
@@ -309,8 +281,7 @@ def reduce_blp_2_dgp(blp_instance):
         #here we have created the system of partial sums we now need to encode the buffer
 
         ############ ENCODING THE BUFFER ##########################################
-        print(f"b: {b[index]}")
-        if b[index] > 0:
+        if b[index] > 0 and rel[index] == "<=":
             l = math.floor(math.log2(b[index]))+1 #obtain the floor of log base 2  + 1 of our bound to encode the buffer
             VL[vertex_id] = "R_{}^{}".format(0, index)
             LV[VL[vertex_id]] = vertex_id
@@ -409,6 +380,9 @@ def reduce_blp_2_dgp(blp_instance):
             edges_to_add.append((LV["A_{}^{}".format(max_var+l+1, index)], LV["R_{}^{}".format(l,index)], 2**(l-1) + 1, 0))
             edges_to_add.append((LV["R_{}^{}".format(l, index)], LV["S_{}^{}".format(l,index)], 2**(l-1), 0))
             edges_to_add.append((LV["S_{}^{}".format(l, index)], LV["T^{}".format(index)], 0, 0))
+        elif b[index] > 0 and rel[index] == "==":
+            #if the bound is positive and we have an equality constraint we do not add a buffer, we simply add a 0 weight edge from the final partial sum vertex to the target vertex to correctly encode the equality constraint
+            edges_to_add.append((LV["P_{}^{}".format(max_var, index)], LV["T^{}".format(index)], 0, 0))
         else:
             #if the bound is negative this will force the error,
             # if the bound is 0 this will correctly force the P_n vertex to be at the P_0 vertex meaning the sum did not extend
@@ -463,36 +437,88 @@ def reduce_blp_2_dgp(blp_instance):
 
             
             ########### ENCODING THE LITERAL EXTENSION MECHANISM ##################################
-                VL[vertex_id] = "N_({}, {})^{}".format(j, 1, index)
+                VL[vertex_id] = "N_({}. {})^{}".format(j, 1, index)
                 LV[VL[vertex_id]] = vertex_id
                 vertex_id += 1
 
                 if get_literal_sign(Ax, index, j):
                     #connect it to the the literal
-                    print(f"Here pos {index}, {j}")
-                    edges_to_add.append((LV["X+{}".format(j)], LV["N_({}, {})^{}".format(j, 1,index)], get_literal_coeff(Ax, index, 1)/2, 0))
+                    edges_to_add.append((LV["X+{}".format(j)], LV["N_({}. {})^{}".format(j, 1,index)], get_literal_coeff(Ax, index, 1)/2, 0))
                 else:
                     #connect it to the negated literal, 
-                    print(f"Here neg {index}, {j}")
-                    edges_to_add.append((LV["X-{}".format(j)], LV["N_({}, {})^{}".format(j, 1,index)], get_literal_coeff(Ax, index, 1)/2, 0))
+                    edges_to_add.append((LV["X-{}".format(j)], LV["N_({}. {})^{}".format(j, 1,index)], get_literal_coeff(Ax, index, 1)/2, 0))
 
                 for k in range(1, j-1):
-                    VL[vertex_id] = "Q_({}, {})^{}".format(j, k, index)
+                    VL[vertex_id] = "Q_({}. {})^{}".format(j, k, index)
                     LV[VL[vertex_id]] = vertex_id
                     vertex_id += 1
 
-                    VL[vertex_id] = "N_({}, {})^{}".format(j, k+1, index)
+                    VL[vertex_id] = "N_({}. {})^{}".format(j, k+1, index)
                     LV[VL[vertex_id]] = vertex_id
                     vertex_id += 1
 
-                    edges_to_add.append((LV["N_({}, {})^{}".format(j, k, index)], LV["Q_({}, {})^{}".format(j, k,index)], get_literal_coeff(Ax, index, k)/2, 0))
-                    edges_to_add.append((LV["Q_({}, {})^{}".format(j, k, index)], LV["N_({}, {})^{}".format(j, k+1,index)], get_literal_coeff(Ax, index, k+1)/2, 0))
+                    edges_to_add.append((LV["N_({}. {})^{}".format(j, k, index)], LV["Q_({}. {})^{}".format(j, k,index)], get_literal_coeff(Ax, index, k)/2, 0))
+                    edges_to_add.append((LV["Q_({}. {})^{}".format(j, k, index)], LV["N_({}. {})^{}".format(j, k+1,index)], get_literal_coeff(Ax, index, k+1)/2, 0))
                 
-                edges_to_add.append((LV["N_({}, {})^{}".format(j, j-1, index)], LV["x_{}^{}".format(j,index)], get_literal_coeff(Ax, index, j-1)/2, 0))
+                edges_to_add.append((LV["N_({}. {})^{}".format(j, j-1, index)], LV["x_{}^{}".format(j,index)], get_literal_coeff(Ax, index, j-1)/2, 0))
 
         E.update(edges_to_add)
         c2e[index] = edges_to_add
     return (E, VL, LV, c2e, max_var)
+
+def contract_zero_edges(E, VL, LV):
+
+    # --- DSU structure ---
+    parent = {v: v for v in VL}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    # --- merge vertices connected by zero edges ---
+    for (u, v, c, I) in E:
+        if abs(c) < 1e-12:
+            union(u, v)
+
+    # --- build representative mapping ---
+    rep = {v: find(v) for v in VL}
+
+    # --- rebuild VL and LV ---
+    new_VL = {}
+    new_LV = {}
+    rep_to_new = {}
+
+    new_id = 1
+    for v in sorted(set(rep.values())):
+        rep_to_new[v] = new_id
+        name = VL[v]
+        new_VL[new_id] = name
+        new_LV[name] = new_id
+        new_id += 1
+
+    # --- rebuild edges ---
+    new_E = set()
+
+    for (u, v, c, I) in E:
+        if abs(c) < 1e-12:
+            continue
+
+        ru = rep_to_new[rep[u]]
+        rv = rep_to_new[rep[v]]
+
+        if ru != rv:
+            if ru > rv:
+                ru, rv = rv, ru
+            new_E.add((ru, rv, c, I))
+
+    return new_E, new_VL, new_LV
 
 #################### Main ###########################
 if __name__ == "__main__":
@@ -507,6 +533,8 @@ if __name__ == "__main__":
     blp_instance = readOpb(opbf)
 
     (E, VL, LV, c2e, max_var) = reduce_blp_2_dgp(blp_instance)
+
+    E, VL, LV = contract_zero_edges(E, VL, LV)
 
 
 

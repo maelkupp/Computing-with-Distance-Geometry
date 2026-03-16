@@ -1,11 +1,7 @@
 #include "geometry.h"
 #include <cmath>
 #include <iostream>
-#include <format>
 
-std::string Point::display() const{
-    return std::format("Point ({} {})", this->x, this->y);
-}
 
 Line::Line(Point origin, double dx, double dy){
     O = origin;
@@ -40,9 +36,7 @@ double Line::projection_error(const Point& p1, const Point& p2) const{
     return std::fabs(original_distance - projected_distance); //trying out a square loss function to see if the rotation works there
 }
 
-std::string Line::display(){
-    return std::format("Line with origin ({}, {}) and direction ({}, {})", this->O.x, this->O.y, this->dir.x, this->dir.y);
-}
+
 
 double euclidean_distance(const Point& p1, const Point& p2){
     return std::hypot(p1.x - p2.x, p1.y - p2.y);
