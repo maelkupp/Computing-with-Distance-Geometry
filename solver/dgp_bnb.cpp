@@ -32,25 +32,23 @@ parse_dgp_instance_dat_file(const std::string& filepath)
     std::string line;
     bool in_edge_block = false;
 
-    // ---- Raw storage ----
     std::vector<std::tuple<int,int,double,int>> raw_edges;
     std::set<int> raw_vertex_ids;
     std::unordered_map<int,std::string> raw_vertex_names;
 
     while (std::getline(infile, line))
     {
-        // Remove Windows carriage return
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
 
-        // Trim
+        // trim
         auto l = line.find_first_not_of(" \t");
         if (l == std::string::npos) continue;
         auto r = line.find_last_not_of(" \t");
         line = line.substr(l, r - l + 1);
 
-        // Remove inline comment
         size_t hash_pos = line.find('#');
+
         std::string comment_part;
         if (hash_pos != std::string::npos)
         {
@@ -60,7 +58,6 @@ parse_dgp_instance_dat_file(const std::string& filepath)
 
         if (line.empty()) continue;
 
-        // Detect start of edge block
         if (!in_edge_block)
         {
             std::string lower = line;
@@ -76,7 +73,6 @@ parse_dgp_instance_dat_file(const std::string& filepath)
             continue;
         }
 
-        // Detect end of block
         if (line.find(';') != std::string::npos)
         {
             in_edge_block = false;
@@ -97,18 +93,53 @@ parse_dgp_instance_dat_file(const std::string& filepath)
         raw_edges.emplace_back(u, v, dist, flag);
         raw_vertex_ids.insert(u);
         raw_vertex_ids.insert(v);
+
+        // -------- Parse vertex names from comment --------
+        if (!comment_part.empty())
+        {
+            auto lb = comment_part.find('[');
+            auto rb = comment_part.find(']');
+
+            if (lb != std::string::npos && rb != std::string::npos && rb > lb)
+            {
+                std::string inside = comment_part.substr(lb + 1, rb - lb - 1);
+
+                auto comma = inside.find(',');
+
+                if (comma != std::string::npos)
+                {
+                    std::string name_u = inside.substr(0, comma);
+                    std::string name_v = inside.substr(comma + 1);
+
+                    // trim spaces
+                    auto trim = [](std::string& s)
+                    {
+                        auto l = s.find_first_not_of(" \t");
+                        auto r = s.find_last_not_of(" \t");
+                        if (l == std::string::npos) { s=""; return; }
+                        s = s.substr(l, r-l+1);
+                    };
+
+                    trim(name_u);
+                    trim(name_v);
+
+                    raw_vertex_names[u] = name_u;
+                    raw_vertex_names[v] = name_v;
+                }
+            }
+        }
     }
 
     if (raw_edges.empty())
         throw std::runtime_error("No edges found in file.");
 
-    // ---- Build relabeling map ----
+    // ---- Relabel vertices ----
     std::unordered_map<int,int> relabel;
     int new_id = 1;
+
     for (int vid : raw_vertex_ids)
         relabel[vid] = new_id++;
 
-    // ---- Build remapped edges ----
     std::vector<Edge> edges;
     std::set<int> vertex_ids;
 
@@ -117,19 +148,18 @@ parse_dgp_instance_dat_file(const std::string& filepath)
         int nu = relabel[u];
         int nv = relabel[v];
 
-        edges.emplace_back(
-            std::min(nu,nv),
-            std::max(nu,nv),
-            dist,
-            flag
-        );
+        if(flag == 1)
+            edges.emplace_back(nu, nv, dist, flag);
+        else
+            edges.emplace_back(std::min(nu,nv), std::max(nu,nv), dist, flag);
 
         vertex_ids.insert(nu);
         vertex_ids.insert(nv);
     }
 
-    // ---- Remap names (if you use them later) ----
+    // ---- Remap vertex names ----
     std::unordered_map<int,std::string> vertex_id_to_name;
+
     for (const auto& [old_id,name] : raw_vertex_names)
         vertex_id_to_name[relabel[old_id]] = name;
 
@@ -171,7 +201,8 @@ std::vector<IndexedEdge> build_indexed_edges(
             edges[i].u,
             edges[i].v,
             edges[i].weight,
-            w_int
+            w_int,
+            edges[i].directed
         });
     }
 
@@ -746,11 +777,16 @@ double coefficient_descent_on_line(const std::vector<Edge>& edges,
             cand.reserve(2 * ngbrs.size() + 1);
             cand.push_back(t[i]);
 
-            for (const auto& nbr : ngbrs) {
+            for (const auto& nbr : ngbrs){
                 int j = nbr.neighbourId - 1;
                 double dij = nbr.dist;
+
                 cand.push_back(t[j] + dij);
-                cand.push_back(t[j] - dij);
+
+                if(!nbr.directed)
+                    cand.push_back(t[j] - dij);
+                else
+                    cand.back() = nbr.outgoing ? t[j] + dij : t[j] - dij;
             }
 
             // Pick best candidate for the TRUE local objective
@@ -910,15 +946,6 @@ ExactEmbeddingSolver::ExactEmbeddingSolver(
 
         // --- Create t variables ---
         t.resize(m);
-        for (int e = 0; e < m; ++e)
-        {
-            t[e] = model->addVar(0.0, GRB_INFINITY,
-                                 1.0, GRB_CONTINUOUS);
-        }
-
-        model->update();
-
-        // --- Create constraints ---
         c1.resize(m);
         c2.resize(m);
 
@@ -927,8 +954,16 @@ ExactEmbeddingSolver::ExactEmbeddingSolver(
             int u = edges[e].u - 1;
             int v = edges[e].v - 1;
 
+            t[e] = model->addVar(0.0, GRB_INFINITY, 1.0, GRB_CONTINUOUS);
+
             c1[e] = model->addConstr(t[e] >= x[u] - x[v]);
             c2[e] = model->addConstr(t[e] >= -x[u] + x[v]);
+
+            if(edges[e].directed)
+            {
+                model->addConstr(x[v] - x[u] == edges[e].weight); //here we are saying that directed edges are hard constraints
+                //I do this because the only time we have directed edges is from the reduction from feas-BLP so we know it will work
+            }
         }
 
         model->set(GRB_IntAttr_ModelSense, GRB_MINIMIZE);
@@ -1101,10 +1136,17 @@ std::pair<bool, std::vector<double>> obtain_feasibility_from_ordering(
                     {
                         double expected;
 
-                        if (t_best[v_id-1] <= t_best[u-1])
-                            expected = final_embedding[u-1] - adj.dist;
-                        else
-                            expected = final_embedding[u-1] + adj.dist;
+                        if(adj.directed){
+                            if(adj.outgoing)
+                                expected = final_embedding[u-1] + adj.dist;
+                            else
+                                expected = final_embedding[u-1] - adj.dist;
+                        }else{
+                            if (t_best[v_id-1] <= t_best[u-1])
+                                expected = final_embedding[u-1] - adj.dist;
+                            else
+                                expected = final_embedding[u-1] + adj.dist;
+                        }
 
                         if (!has_candidate)
                         {
@@ -1136,7 +1178,6 @@ std::pair<bool, std::vector<double>> obtain_feasibility_from_ordering(
 
     return {true, final_embedding};
 
-    
 
 }
 
@@ -1166,8 +1207,8 @@ void branch_and_bound(
     if(eid == -1){
     //have no more nodes to select, we have decided on all of them
     auto solver_pair = exact_solver.solve(fixed_signs);
+
     if(solver_pair.first < bestUB){
-        //std::cerr << "Got new best error " << err << "\n";
         bestUB = solver_pair.first;
         bestEmbedding = solver_pair.second;
         if(solver_pair.first == 0.0){
@@ -1196,7 +1237,7 @@ SolverConfig getSolverConfig(int weight_flag){
         sc.scaling_power = 0;
     }else{
         sc.mode = WeightMode::REAL_SCALED;
-        sc.scaling_power = 2; //only care about 2 decimals
+        sc.scaling_power = 1; //only care about 2 decimals
     }
     return sc;
 }
@@ -1232,7 +1273,14 @@ std::pair<double, std::vector<double>> solve_minerr_dgp1(
     std::vector<CycleID> i_cycles =  convert_cycles_to_edge_ids(cycle_basis, i_edges);
 
     
-    std::vector<int> fixed_signs = std::vector<int>(static_cast<int>(edges.size()), 0); // all the edges are free
+    std::vector<int> fixed_signs = std::vector<int>(static_cast<int>(edges.size()), 0); //initalize it so that all edges are free edges
+
+    //here we encoding the directed edges, which are not free at all
+    for(int i=0; i<static_cast<int>(edges.size()); ++i){
+        if(edges[i].directed == 1){
+            fixed_signs[i] = -1;
+        }
+    }
     std::pair<double, std::vector<double>> p_best = optimized_projection_minErrDGP1_UB(edges, vertex_ids, adj_list); //obtain a tight UB with our heuristic
     double bestUB = p_best.first;
 
@@ -1250,8 +1298,10 @@ std::pair<double, std::vector<double>> solve_minerr_dgp1(
         }
 
     }
+
+
+
     ExactEmbeddingSolver solver(i_edges, vertex_ids.size());
-    fixed_signs[0] = 1; //we fix the first edge of the tree to +1, so we only need to search for half the tree (huge performance gain for infeasible instances)
     std::vector<double> bestEmbedding(vertex_ids.size(), 0.0);
     branch_and_bound(solver, i_cycles, i_edges, fixed_signs, bestUB, bestEmbedding, scale);
 

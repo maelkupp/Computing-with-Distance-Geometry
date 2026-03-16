@@ -63,6 +63,7 @@ struct IndexedEdge{
     int v;
     double weight;      // original
     int weight_int;     // scaled version
+    int directed;
 };
 
 struct CycleID{

@@ -21,6 +21,5 @@ int main(int argc, char* argv[]){
     
     auto t1 = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> t = t1-t0;
-    std::cerr << " in time " << t.count() << "\n" << std::endl;
     std::cout << p_solver.first << " " << t.count();
 }

@@ -1,0 +1,19 @@
+# DGP instance in .dat format for dgp.mod
+# this graph is a DGP encoding of a random instance
+
+param : E : c I :=
+  2 4  5.000 0
+  1 6  13.000 0
+  3 7  7.000 0
+  4 5  1.000 0
+  1 7  14.000 0
+  3 6  6.000 0
+  1 8  20.000 0
+  2 7  8.000 0
+  5 8  8.000 0
+  6 7  1.000 0
+  3 5  5.000 0
+  4 7  3.000 0
+  1 5  12.000 0
+  1 4  11.000 0
+;

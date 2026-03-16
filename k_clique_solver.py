@@ -3,7 +3,8 @@ import os
 import time
 import numpy as np
 import random
-from reductions.blp2dgp import reduce_blp_2_dgp, readOpb
+from reductions.blp2dgp_opt import reduce_blp_2_dgp_opt, readOpb, contract_zero_edges
+from reductions.blp2dgp import reduce_blp_2_dgp
 
 def writeDat(G, dgpf, opbf):
     (V,E, VL, nlits) = G
@@ -50,19 +51,20 @@ def create_k_clique_blp(n, p, k):
     return "\n".join(lines)
 
 if __name__ == "__main__":
-    n = 10
-    p = 0.5
+    n = 7
+    p = 0.6
     k = 4
 
     dgpf = "k_clique.dat"
     opbf = "k_clique.opb"
 
-    blp_str = create_k_clique_blp(n, p, k)
-    with open(opbf, "w") as f:
-        f.write(blp_str)
+    # blp_str = create_k_clique_blp(n, p, k)
+    # with open(opbf, "w") as f:
+    #     f.write(blp_str)
 
     blp_instance = readOpb(opbf)
-    (E, VL, LV, c2e, max_var) = reduce_blp_2_dgp(blp_instance)
+    (E, VL, LV, c2e, max_var) = reduce_blp_2_dgp_opt(blp_instance)
+    (E, VL, LV) = contract_zero_edges(E, VL, LV)
 
     ## make a graph G=(V,E)
     E = sorted(list(E))
@@ -73,6 +75,10 @@ if __name__ == "__main__":
     ## write DGP1 instance
     writeDat(G, dgpf, opbf)
 
-    solution = subprocess.run(["./solver/solver", dgpf, "1"], capture_output=True, text=True)
-    print("DGP Solution:", solution)
+    solution = subprocess.run(["./solver/solver", dgpf, "0"], capture_output=True, text=True)
+    directed_solution = solution.stdout
+    print(f"error logs {solution.stderr}")
+
+
+    print(f"Directed solution:{directed_solution}")
 
